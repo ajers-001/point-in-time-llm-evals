@@ -1,6 +1,6 @@
 # Point-in-Time Language Models: Measuring Look-Ahead Bias
 
-By [Ajer Sher](https://ADD-YOUR-LINK-HERE)
+By [Ajer Sher](https://www.linkedin.com/in/ajer-sher-74397b240/)
 
 ## The problem
 
