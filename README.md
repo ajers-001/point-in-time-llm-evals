@@ -116,8 +116,8 @@ from 11 to 0 of 49 drug trials. I then tested each part of the method and tried 
   would go on to leak with a score of about 0.75 (on a 0 to 1 scale where 0.5 is chance).
 - **Seeing hidden look-ahead.** The lens showed "covid" and "lockdown" inside the model while it answered questions
   about office life dated 2015, and "Tesla" inside the model while it wrote about Volkswagen.
-- **Its limit.** The lens reads single word pieces, so it can miss names made of several words. In separate work, I
-  extended the lens from single word pieces to full words.
+- **Its limit.** The lens reads single word pieces, so it can miss names made of several words. In [separate
+  work](https://x.com/Ajer28251/status/2124252821394509999), I extended the lens from single word pieces to full words.
 
 ### From easy questions to harder ones
 
