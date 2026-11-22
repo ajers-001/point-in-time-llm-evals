@@ -89,6 +89,58 @@ test could not give a final verdict. I report this result as it is.
 Write-ups: [round 1 rules](docs/round1_rules.md) · [round 1 results](docs/round1_results.md) ·
 [first-check rules](docs/memory_screen_rules.md) · [sources for each part of the method](docs/method_references.md)
 
+## What I tried along the way
+
+### Building on the paper's method
+
+The paper's method has two parts. The first part uses small helper models, one trained on text up to 2015 and one
+trained on later text, to guide the large model away from later knowledge. The second part, called steering, nudges
+the model's internal state in a chosen direction. I tested each part and tried many changes of my own.
+
+- **Steering.** In my tests, steering added little on top of the helper models. I therefore focused my effort on the
+  helper models.
+- **Strength.** I tried the helper models at several strengths. Stronger settings removed more leaks, but they also
+  produced more repeated or broken text. I built fixes that stop most of the broken text, so that the leak counts
+  reflect what the model knows rather than how well it writes.
+- **What the helpers know.** I found that the paper's small 2024 helper knew only 2 of the 129 merger outcomes, while
+  the large model knew 33. The helpers can only remove knowledge that they can tell apart, so their training data
+  limits how much they can catch at this size.
+- **One helper instead of two.** I tried using the large model itself as the "later" side, with a single 2015 helper,
+  and acting only on names and numbers. Together with dated news articles from before 2016, this cut leaks on direct
+  questions from 33 to 6. However, it could not catch look-ahead carried by ordinary words such as "lockdown" or
+  "remote work". Humzah also pointed out that using the large model as a helper can remove some of its intelligence
+  along with its knowledge.
+- **Two helpers on every word.** I then compared one helper against two helpers on every word, across many model
+  sizes. Two helpers did better at every size and improved as the helpers grew larger, while one helper did not.
+  This is the design I use now. The main path forward is a stronger matched pair of helpers.
+- **Other ideas that did not work.** Using the model's own notes about later events as the "later" side did not
+  reduce leaks and cost old knowledge. A simple guard against repeated text also did not cut repetition.
+- **A planted-news test.** I gave the model short news stories about real and made-up company deals. The plain model
+  leaked the real outcome in 28% of answers about real deals, and the two-helper version leaked it in 14%.
+
+### Making the Jacobian lens reliable
+
+- **Fitting the lens.** I fitted the lens to Qwen3.5-27B on 100 dated news texts from 2007 to 2015, in four parts. Two
+  halves of the lens agreed closely, and a lens built from only 25 texts already matched the full lens, so more
+  fitting would not have helped.
+- **Proving that it works on clear cases.** I first tested the lens on questions where the answer is obvious. When
+  the model was told the date was 2025, the lens showed later topics more often than when it was told 2015, in 9 of 10
+  topics. Asked as of 2025, the real outcome stood out inside the model in 25 of 32 events. The lens also saw every
+  first written word before the model wrote it.
+- **Fixing a false signal.** The first planned run failed because one word, "tiktok", appeared inside the model in
+  almost every answer, whatever the question. I found 12 such background words on a separate set of answers and
+  filtered them out, after which the lens could be used.
+- **Seeing hidden look-ahead.** With the lens, I could see later knowledge that the written answers hid. For example,
+  "covid" and "lockdown" appeared inside the model while it answered questions about office life dated 2015, and
+  "Tesla" appeared inside while it wrote about Volkswagen.
+- **Its limits.** The lens reads single word pieces, so it can miss names that are made of several words.
+
+### From easy questions to harder ones
+
+These early tests used questions that were fairly easy to guess, such as forecasts with a few given options. They were
+useful for proving that the lens works, but too easy to reveal subtle look-ahead. I therefore moved to harder
+benchmarks: company earnings, and the forecasting questions with crowd forecasts described above.
+
 ## The next round (designed, not yet run)
 
 The next round uses 586 test questions, and 213 of them have never been shown to any model. Each question is also asked
