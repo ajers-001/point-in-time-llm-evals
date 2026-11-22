@@ -110,16 +110,51 @@ This check also found a flaw in the round 1 scoring. Under that scoring, collect
 made it harder, not easier, to call a model clean. Round 2 fixes this.
 [Round 2 rules (draft)](docs/round2_rules_draft.md)
 
-## How the work is done
+## How this work came together
 
-- **Rules come before results.** For every paid test, the rules, the pass marks and the scoring code are written down
-  and saved before any result exists. Any later change is listed separately, and the result under the original rules
-  stays the main result.
-- **The answers never reach the model.** The real outcomes and the crowd's forecasts stay outside the test machine.
-  Every file sent to the test machine is checked for them.
-- **Negative results are reported.** An earlier test on company earnings ended inconclusive, because Qwen3.5-27B turned
-  out not to remember earnings results at all. Other models, such as DeepSeek V4 Pro, Kimi and Claude Opus, remembered
-  85% to 95% of them.
+This project started in finance. I had built my own AI trading strategy and wanted to backtest it, which means
+testing how it would have done in the past. I soon ran into a problem: the AI model already knew what happened in
+the years I wanted to test, so the backtest could not be trusted. While looking for a solution, I found the
+frontier-to-pit paper by Merchant and Levy. I decided to recreate their method and see whether I could improve it.
+
+After rebuilding the method, I spoke with Humzah Merchant, one of the paper's authors. On his advice, I began building
+new benchmarks that go beyond the paper's original tests, so that the model can be judged more fairly and on more
+kinds of questions. Most of my time now goes into building these benchmarks and into using Anthropic's Jacobian lens
+to evaluate the model.
+
+The Jacobian lens lets me look inside the model before it writes its answer. I use it to check whether the model holds
+knowledge of later events, even when its written answer does not show it. This helps me confirm when look-ahead bias is
+really there and whether my engine is working. When the lens shows that the model knows the future, and my engine
+keeps that knowledge out of the answer, I count that as a win.
+
+I use prediction markets and forecasting sites because they record what people expected at the time, as a price or a
+forecast. This tells me exactly what was knowable on a given day. If a model does better than that expectation, it
+must be using knowledge from later on.
+
+I have worked with Claude throughout this project, going back and forth to try ideas and improve them. I make the
+decisions and sign off on every step, and the ideas and information are my own. Claude helps me run the tests and keep
+the work organized.
+
+### What my benchmarks focus on
+
+- **The expectation at the time.** Every question comes with a record of what people expected before the outcome,
+  such as a market price or a forecast. This record was made at the time, not rebuilt later with hindsight, so the
+  model can be compared against what was truly knowable on that day.
+- **Knowledge the model actually has.** Before testing for look-ahead bias, I first check that the plain model knows
+  the real outcome. I found that models often do not know this level of detail. For example, Qwen3.5-27B did not
+  remember company earnings results, while other models such as DeepSeek V4 Pro, Kimi and Claude Opus remembered 85%
+  to 95% of them. If the model never knew the answer, a test cannot show whether the engine hides it.
+- **A check on what cannot be known.** Every test also includes questions from 2025 and 2026, which the model cannot
+  know. On these questions the test must show no effect. If it does, the test is measuring something other than
+  look-ahead bias.
+- **Usefulness as well as leakage.** A model can look free of look-ahead bias simply by giving the same answer to
+  everything. For this reason, I also measure whether its forecasts are still accurate and useful.
+- **Realistic questions.** I aim for questions that someone would actually use in practice, such as forecasts of real
+  events and economic numbers. For now the benchmarks stay at a high level, and I plan to make them more detailed over
+  time.
+- **Rules before results.** For every paid test, I write down the rules, the pass marks and the scoring code before
+  any result exists. The real outcomes never reach the model during a test, and results that are inconclusive are
+  reported as inconclusive.
 
 ## The test pipeline
 
