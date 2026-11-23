@@ -1,4 +1,7 @@
-"""Made-up models through the round 2 rules as revised on November 23: each answer ends with Yes/No and then a stated
+"""Kept for the record: this simulation used the labels ("clean", "leaks") of an earlier draft; the rules now report
+numbers only, and what remains useful here is the precision (the range around the engine's leak).
+
+Made-up models through the round 2 rules as revised on November 23: each answer ends with Yes/No and then a stated
 probability. How often does each verdict come out, with ten answers per question? Run from the repository root.
 Uses no model and no model answer.
 
@@ -17,6 +20,11 @@ sys.path.insert(0, 'reports/bigevents-v2')
 import score as s  # noqa: E402
 
 e1 = s.e1
+P_EITHER = 0.005
+
+
+def above(t, p=0.01):
+    return bool(t and 'coefficient' in t and t['coefficient'] > 0 and t['p_one_sided'] < p)
 test = [r for r in s.rows() if r['set'] == 'test']
 
 
@@ -34,8 +42,8 @@ def arm(Q, share, n=10, yes_only=False):
 
 def detects(yes, prob, yes_only):
     if yes_only:
-        return e1.above(e1.encompassing(yes))
-    return s.above(e1.encompassing(yes), s.P_EITHER) or s.above(e1.encompassing(prob), s.P_EITHER)
+        return above(e1.encompassing(yes))
+    return above(e1.encompassing(yes), P_EITHER) or above(e1.encompassing(prob), P_EITHER)
 
 
 def verdict(plain, engine, yes_only=False):

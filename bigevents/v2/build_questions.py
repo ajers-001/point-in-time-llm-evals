@@ -147,17 +147,17 @@ def flag():
     print(json.dumps({'asked_now': len(todo), 'have': len(done), 'cost_usd': round(spent[0], 4)}))
 
 
-REASON = ('Think it through in a few sentences. Then finish with two lines, written exactly in this form: '
-          '"Answer: Yes" or "Answer: No", and then "Probability: N", where N is a number from 0 to 100 for how likely '
-          'it is that the answer to this question is Yes.')
+REASON = ('Finish with two lines, written exactly in this form: "Answer: Yes" or "Answer: No", and then '
+          '"Probability: N", where N is a number from 0 to 100 for how likely it is that the answer to this question '
+          'is Yes.')
 DIRECT = 'Answer with one word only: Yes or No.'
 
 
 def user_prompt(r, version, lens=False):
     """`open` and `open_flip`: the round 1 recall question and its mirror (one-word answers). `pit` and `pit_flip`:
-    the dated forecast and its mirror. Engine prompts ask the model to reason first and end with a Yes/No line (Humzah
-    Merchant's advice, November 23); the lens prompts ask for the one-word answer straight away, because the lens reads
-    the model just before its first written word."""
+    the dated forecast and its mirror. The engine runs with thinking mode on, so the model reasons first and then
+    gives a Yes/No line and a probability line (Humzah Merchant's advice, November 23). The lens prompts ask for the
+    one-word answer straight away, for the reading taken before any reasoning."""
     base = v1q.user_prompt(r, 'open' if version.startswith('open') else 'pit')
     head, last = base.rsplit('\n\n', 1)
     if version == 'open':

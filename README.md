@@ -197,25 +197,25 @@ to check first that a model knows the answers, which led to the forecasting benc
 
 - **586 test questions,** 213 of which have never been shown to any model. Two more sets are reported separately: 369
   long shots that the crowd put under 10% or over 90%, and 75 real prediction-market questions from 2023 and 2024.
-- **Each question asked in reverse** ("Will this not happen?"), so that a model which always says "No" cannot pass.
-- **Reason first, then answer.** Following feedback from Humzah Merchant, the model thinks the question through in a
-  few sentences and ends with a clear Yes or No. It then gives a probability on its own line, so that the number
-  cannot change the Yes or No.
-- **Five answers per question.** The model's sampler uses a fixed seed for every request in a run, so asking the same
-  question five times in one run would return five identical answers. Each answer therefore comes from a separate run.
-- **Three planned checks beyond the leak itself:** whether the engine still blocks later knowledge when the prompt says
-  the date is 2026; whether usefulness is preserved (the answers still follow the crowd, forecasts on unknowable
-  questions stay as good as the plain model's, and general reasoning scores hold); and, with the Jacobian lens, how
-  often the model had the real outcome inside but did not write it.
-- **A scorecard, not a label.** The result is reported as numbers with their ranges: the plain model's leak, the
-  engine's leak, the share removed, and the usefulness measures.
+- **Each question asked in reverse** ("Will this not happen?"), so that a model which always says "No" cannot hide it.
+- **Reason first, then answer.** Following feedback from Humzah Merchant, the model's thinking mode is on. It reasons,
+  gives a clear Yes or No, and then gives a probability on its own line, so that the number cannot change the Yes or
+  No.
+- **Several answers per question.** The model's sampler uses a fixed seed for every request in a run, so repeating a
+  question inside one run would return identical answers. Each answer therefore comes from a separate run.
+- **Numbers, not labels.** The rules fix in advance what is measured and how, and set no pass mark. The result is a
+  scorecard: the plain model's leak, the engine's leak, the share removed, whether the engine still blocks later
+  knowledge when the prompt says the date is 2026, forecast error, and whether the answers still follow the crowd.
+- **The lens through the whole answer.** In round 1 the lens read the model just before its first word. In round 2
+  it also follows a sample of answers from the first thinking token to the final Yes or No, to show when the real
+  outcome appears inside the model and whether it is still there when the answer is written. A further measure,
+  "seen inside, not written", counts how often the model had the real outcome inside and did not write it.
 
-Before spending any money, I ran made-up models through the scoring. The test rarely gives a wrong label: a truly clean
-model is called leaking 1% to 5% of the time, and a model that still leaks too much is called clean 4% of the time. How
-often a truly clean model earns the label "clean" depends on how strongly the plain model leaks. With a leak like the
-one measured in round 1, it is about two times in three. These checks also found a flaw in the round 1 scoring, and an
-optimistic assumption in my own first simulation. Both are corrected in the rules.
-[Round 2 rules (draft)](docs/round2_rules_draft.md)
+Before spending any money, I ran made-up models through the scoring to learn how precise the test is. With a
+plain-model leak like the one measured in round 1, the share of the leak removed can be known to roughly 20
+percentage points. These checks also found a flaw in the round 1 scoring, and an optimistic assumption in my own first
+simulation. Both are corrected in the rules. A small pilot run comes first, to measure the cost of running with
+thinking on. [Round 2 rules (draft)](docs/round2_rules_draft.md)
 
 ## The test pipeline
 
