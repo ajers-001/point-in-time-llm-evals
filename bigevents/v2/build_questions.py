@@ -2,7 +2,7 @@
 
     python reports/bigevents-v2/build_questions.py candidates   # fresh Autocast questions -> v2 candidates file (labels, offline)
     python reports/bigevents-v2/build_questions.py flag         # reader-model filter on the fresh ones (OpenRouter; BUDGET dollars)
-    python reports/bigevents-v2/build_questions.py build        # -> reports/bigevents-v2/questions.json, prompts.json
+    python reports/bigevents-v2/build_questions.py build        # -> questions.json, prompts.json, lens_prompts.json
 
 Sets (fixed by rule, never by outcome):
   test   the 373 round 1 test questions, plus fresh 2016-2022 Autocast questions not used in round 1: yes/no, settled,
@@ -13,9 +13,10 @@ Sets (fixed by rule, never by outcome):
          under 10% or over 90%, at least 50 forecasters, same filters.
 Stories are worked out again over all three sets together (round 1 rule, build_candidates.stories).
 
-Every question is asked in four prompts: `open` and `pit` as in round 1, and their mirror images `open_flip` and
-`pit_flip`, which ask whether the question resolves No. A model that answers No to everything contradicts itself
-across a pair, so the pair cancels it out.
+Every question is asked in four prompts: `open` and `pit`, and their mirror images `open_flip` and `pit_flip`, which
+ask whether the question resolves No. A model that answers No to everything contradicts itself across a pair, so the
+pair cancels it out. The dated prompts ask the model to reason first and end with a Yes/No line; the lens gets the same
+prompts with a one-word answer (`lens_prompts.json`).
 """
 import csv
 import datetime as dt
@@ -103,13 +104,19 @@ def fresh():
     return rows
 
 
+def market_rows():
+    """Prediction-market questions (Polymarket, Kalshi) that closed in 2023-2024, from the round 1 candidate file. Plain
+    Qwen's knowledge fades during 2024, so this set is reported apart and is in no verdict."""
+    return [r for r in ms.rows() if r['source'] in ('polymarket', 'kalshi') and r['closed'][:4] in ('2023', '2024')]
+
+
 def flag():
     """The round 1 reader filter (same model, same prompt) on the fresh questions the pattern filter keeps."""
     import concurrent.futures as cf
     import time
     import urllib.request
     done = json.loads(FLAGS.read_text()) if FLAGS.exists() else {}
-    todo = [r for r in fresh() if r['key'] not in done and r['rules'] and not v1q.pattern_flag(r)]
+    todo = [r for r in fresh() + market_rows() if r['key'] not in done and r['rules'] and not v1q.pattern_flag(r)]
     budget, spent = float(os.environ['BUDGET']), [0.0]
 
     def ask(r):
@@ -140,18 +147,27 @@ def flag():
     print(json.dumps({'asked_now': len(todo), 'have': len(done), 'cost_usd': round(spent[0], 4)}))
 
 
-def user_prompt(r, version):
-    """Round 1 text for `open` and `pit`; the mirror versions change only the last line."""
-    if version in ('open', 'pit'):
-        return v1q.user_prompt(r, version)
-    base = v1q.user_prompt(r, version[:-5])
+REASON = ('Think it through in a few sentences. Then finish with two lines, written exactly in this form: '
+          '"Answer: Yes" or "Answer: No", and then "Probability: N", where N is a number from 0 to 100 for how likely '
+          'it is that the answer to this question is Yes.')
+DIRECT = 'Answer with one word only: Yes or No.'
+
+
+def user_prompt(r, version, lens=False):
+    """`open` and `open_flip`: the round 1 recall question and its mirror (one-word answers). `pit` and `pit_flip`:
+    the dated forecast and its mirror. Engine prompts ask the model to reason first and end with a Yes/No line (Humzah
+    Merchant's advice, November 23); the lens prompts ask for the one-word answer straight away, because the lens reads
+    the model just before its first written word."""
+    base = v1q.user_prompt(r, 'open' if version.startswith('open') else 'pit')
     head, last = base.rsplit('\n\n', 1)
+    if version == 'open':
+        return base
     if version == 'open_flip':
         assert last.startswith('How was it settled?'), last
         return head + '\n\nWas it settled No? Answer with one word only: Yes, No, or Unknown if you do not know.'
     assert last.startswith('Will this question resolve Yes?'), last
-    return head + ('\n\nWill this question resolve No? Answer with Yes or No, then the probability that it resolves No '
-                   'as a number from 0 to 100.')
+    ask = 'Will this question resolve Yes?' if version == 'pit' else 'Will this question resolve No?'
+    return head + '\n\n' + ask + ' ' + (DIRECT if lens else REASON)
 
 
 def build():
@@ -160,7 +176,7 @@ def build():
     rows1 = {r['key']: r for r in ms.rows()}
     q1 = json.loads((V1 / 'engine/questions.json').read_text())
     flags = json.loads(FLAGS.read_text())
-    sets = {'test': [], 'floor': [], 'long': []}
+    sets = {'test': [], 'floor': [], 'long': [], 'markets': []}
     for q in q1:
         sets[q['set']].append(dict(rows1[q['key']], origin='round 1'))
     why = {}
@@ -170,12 +186,19 @@ def build():
             why[f"{r['group']}: removed by {reason}"] = why.get(f"{r['group']}: removed by {reason}", 0) + 1
             continue
         sets[r['group']].append(dict(r, origin='fresh'))
+    for r in market_rows():
+        reason = 'pattern' if v1q.pattern_flag(r) else 'reader' if v1q.reader_flag(r, flags) else None
+        if reason:
+            why[f'markets: removed by {reason}'] = why.get(f'markets: removed by {reason}', 0) + 1
+            continue
+        sets['markets'].append(dict(r, origin='round 1 candidates'))
     everything = [dict(r, set=name) for name, rs in sets.items() for r in rs]
     for r in everything:
         r['question_date'] = dt.date.fromisoformat(str(r['question_date']))
     everything.sort(key=lambda r: (r['question_date'], r['key']))
     bc.stories(everything)
     questions, prompts = [], []
+    by_key = {r['key']: r for r in everything}
     for r in everything:
         r['question_date'] = r['question_date'].isoformat()
         questions.append({'key': r['key'], 'set': r['set'], 'origin': r['origin'], 'story': r['story']})
@@ -183,8 +206,10 @@ def build():
             system = ms.SYSTEM if v.startswith('open') else pit(v1q.long_date(r['question_date']))
             prompts.append({'example_id': f"{r['key']}__{v}", 'item': r['key'], 'version': v,
                             'asked_on': r['question_date'], 'system_prompt': system, 'prompt_text': user_prompt(r, v)})
+    lens_prompts = [dict(p, prompt_text=user_prompt(by_key[p['item']], p['version'], lens=True)) for p in prompts]
     (HERE / 'questions.json').write_text(json.dumps(questions, indent=1) + '\n')
     (HERE / 'prompts.json').write_text(json.dumps(prompts, indent=1) + '\n')
+    (HERE / 'lens_prompts.json').write_text(json.dumps(lens_prompts, indent=1) + '\n')
     count = {name: {'questions': sum(q['set'] == name for q in questions),
                     'fresh': sum(q['set'] == name and q['origin'] == 'fresh' for q in questions),
                     'stories': len({q['story'] for q in questions if q['set'] == name})} for name in sets}

@@ -2,7 +2,8 @@
 
     python reports/bigevents-v2/score.py ANSWERS.json [LENS.json]   -> reports/bigevents-v2/score.json
 
-ANSWERS.json: {"F-open": {example_id: [answer per seed, ...]}, "F-pair": {...}}. Example ids are
+ANSWERS.json: {"F-open": {example_id: [answer per seed, ...]}, "F-pair": {...}}. A dated answer ends with the lines
+"Answer: Yes|No" and "Probability: N". Example ids are
 "<key>__open", "<key>__open_flip", "<key>__pit", "<key>__pit_flip". LENS.json: {example_id: lead}, the lead being
 lens "yes" cells minus "no" cells by the step 1 rule (reports/bigevents-v1/lens_to_scores.py).
 Outcomes and crowd forecasts are read here, offline, from the candidate files; they never enter the sandbox.
@@ -22,8 +23,13 @@ import engine_score as e1  # noqa: E402  (encompassing test, source of each ques
 import memory_screen as ms  # noqa: E402
 
 P_LEAK, CLEAN_SHARE, MIN_NUMBERS, MIN_ANSWERED, MIN_STORIES = 0.01, 0.25, 0.90, 0.50, 20
-MONTHS = r'(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?'
-DATE_NUMBER = re.compile(rf'\b{MONTHS}\s+\d{{1,2}}\b|\b\d{{1,2}}\s+{MONTHS}|\b\d{{1,2}}/\d{{1,2}}(?:/\d{{2,4}})?\b|\b\d{{4}}\b', re.I)
+FLOOR_BRIER_MARGIN, BENCH_MARGIN = 0.02, 5.0
+# General ability of this exact engine setting (hybrid-v1 H-pair, alpha 1.75), measured before round 2
+# (reports/hybrid-v1/REPORT.md): plain Qwen3.5-27B against the engine, in percent.
+GENERAL_ABILITY = {'GPQA-Diamond': (78.8, 80.8), 'IFEval prompt-strict': (88.0, 86.5)}
+FINAL = re.compile(r'answer\W*:?\W*(yes|no)\b', re.I)
+PROB = re.compile(r'probability\W*:?\W*(\d{1,3}(?:\.\d+)?)', re.I)
+P_EITHER = 0.005   # when both the Yes/No score and the probability score are tested, each at half of P_LEAK
 
 
 def rows():
@@ -40,53 +46,49 @@ def rows():
     return out
 
 
-def number(text):
-    """The first number from 0 to 100 in the answer that is not part of a date (a number next to a month name, a
-    day/month form, or any four-digit number)."""
-    text = text or ''
-    masked = DATE_NUMBER.sub(lambda m: ' ' * len(m.group(0)), text)
-    for m in re.finditer(r'(?<![\d.])(\d{1,3}(?:\.\d+)?)(?![\d])', masked):
-        v = float(m.group(1))
-        if 0 <= v <= 100:
-            return v / 100
-    return None
-
-
-def first_word(text):
-    w = re.search(r'\b(yes|no)\b', (text or '').lower())
-    return None if not w else (1 if w.group(1) == 'yes' else -1)
-
-
 def last_word(text):
     """Open versions: the last of Yes, No, Unknown (round 1 rule). +1 Yes, -1 No, 0 Unknown or nothing."""
     w = re.findall(r'\b(yes|no|unknown)\b', (text or '').lower())
     return {'yes': 1, 'no': -1}.get(w[-1], 0) if w else 0
 
 
-def prob_yes(text, flip):
-    """Probability that the question resolves Yes, from one dated answer. The number is the probability of the
-    word the prompt asked about (Yes, or No in the mirror prompt); with no number, the first Yes or No gives 0.75
-    or 0.25 for that word. None when the answer has neither."""
-    p = number(text)
-    if p is None:
-        w = first_word(text)
-        p = None if w is None else (0.75 if w > 0 else 0.25)
-    if p is None:
+def final_answer(text):
+    """Dated prompts: the last line of the form "Answer: Yes" or "Answer: No" (bold or spacing allowed). +1 Yes, -1 No,
+    None when the answer has no such line (for example, cut off by the token limit)."""
+    found = FINAL.findall(text or '')
+    return None if not found else (1 if found[-1].lower() == 'yes' else -1)
+
+
+def says_happens(text, flip):
+    """1 if this answer says the event happens, 0 if it says it does not, None if it has no final answer line.
+    In the mirror prompt ("Will this question resolve No?"), "Yes" means the event does not happen."""
+    a = final_answer(text)
+    if a is None:
         return None
+    return float((a > 0) != flip)
+
+
+def stated_probability(text, flip):
+    """Probability that the event happens, from the last "Probability: N" line (N from 0 to 100), or None. The number
+    is the chance that the answer to the prompt's own question is Yes, so the mirror prompt is turned around."""
+    found = [float(x) for x in PROB.findall(text or '') if 0 <= float(x) <= 100]
+    if not found:
+        return None
+    p = found[-1] / 100
     return 1 - p if flip else p
 
 
 def dated(arm_answers, key):
-    """Combined probability of Yes for one question: the mean over seeds and over the two mirror prompts.
-    Also returns how many of the answers carried a number, and the two halves for the consistency report."""
-    orig = [prob_yes(t, False) for t in arm_answers.get(f'{key}__pit', [])]
-    flip = [prob_yes(t, True) for t in arm_answers.get(f'{key}__pit_flip', [])]
-    numbers = sum(number(t) is not None for t in arm_answers.get(f'{key}__pit', []) + arm_answers.get(f'{key}__pit_flip', []))
-    asked = len(arm_answers.get(f'{key}__pit', [])) + len(arm_answers.get(f'{key}__pit_flip', []))
-    o, f = [p for p in orig if p is not None], [p for p in flip if p is not None]
-    both = o + f
-    return (float(np.mean(both)) if both else None, numbers, asked,
-            float(np.mean(o)) if o else None, float(np.mean(f)) if f else None)
+    """One question's dated answers (all seeds, both mirror prompts): the share that say the event happens (`yes`), the
+    mean stated probability that it happens (`prob`), how many answers carried each, and the two halves of `yes`."""
+    a, b = arm_answers.get(f'{key}__pit', []), arm_answers.get(f'{key}__pit_flip', [])
+    yo, yf = [says_happens(t, False) for t in a], [says_happens(t, True) for t in b]
+    pr = [stated_probability(t, False) for t in a] + [stated_probability(t, True) for t in b]
+    o, f = [v for v in yo if v is not None], [v for v in yf if v is not None]
+    pr = [v for v in pr if v is not None]
+    return {'yes': float(np.mean(o + f)) if o + f else None, 'prob': float(np.mean(pr)) if pr else None,
+            'n_answer': len(o + f), 'n_prob': len(pr), 'asked': len(a) + len(b),
+            'o': float(np.mean(o)) if o else None, 'f': float(np.mean(f)) if f else None}
 
 
 def recall(arm_answers, key):
@@ -151,8 +153,8 @@ def leak_size(obs, other=None, seed=e1.SEED, draws=e1.DRAWS):
     return out
 
 
-def above(t):
-    return bool(t and 'coefficient' in t and t['coefficient'] > 0 and t['p_one_sided'] < P_LEAK)
+def above(t, p=P_LEAK):
+    return bool(t and 'coefficient' in t and t['coefficient'] > 0 and t['p_one_sided'] < p)
 
 
 def brier(obs):
@@ -179,19 +181,25 @@ def story_interval(obs, stat, seed=e1.SEED, draws=e1.DRAWS):
 
 
 def arm_dated(qs, ans):
-    obs, numbers, asked, halves = [], 0, 0, []
+    obs, obs_prob, n_answer, n_prob, asked, halves = [], [], 0, 0, 0, []
     for r in qs:
-        p, n, a, o, f = dated(ans, r['key'])
-        numbers, asked = numbers + n, asked + a
-        if p is not None:
-            obs.append((r, p))
-        if o is not None and f is not None:
-            halves.append(abs(o - f))
-    return {'questions': len(qs), 'with_a_probability': len(obs), 'share_with_a_number': numbers / max(1, asked),
-            'primary': e1.encompassing(obs) if len({round(p, 9) for _, p in obs}) > 1 else None,
-            'leak_size': leak_size(obs),
-            'brier': brier(obs), 'brier_ci95': story_interval(obs, lambda x: brier(x)['model']) if obs else None,
-            'mirror_gap': float(np.mean(halves)) if halves else None, 'obs': obs}
+        d = dated(ans, r['key'])
+        n_answer, n_prob, asked = n_answer + d['n_answer'], n_prob + d['n_prob'], asked + d['asked']
+        if d['yes'] is not None:
+            obs.append((r, d['yes']))
+        if d['prob'] is not None:
+            obs_prob.append((r, d['prob']))
+        if d['o'] is not None and d['f'] is not None:
+            halves.append(abs(d['o'] - d['f']))
+
+    def test(o):
+        return e1.encompassing(o) if len({round(p, 9) for _, p in o}) > 1 else None
+    return {'questions': len(qs), 'with_an_answer': len(obs), 'share_answered': n_answer / max(1, asked),
+            'share_with_probability': n_prob / max(1, asked),
+            'primary': test(obs), 'leak_size': leak_size(obs),
+            'primary_prob': test(obs_prob), 'leak_size_prob': leak_size(obs_prob),
+            'brier_yes_share': brier(obs), 'brier_prob': brier(obs_prob),
+            'mirror_gap': float(np.mean(halves)) if halves else None, 'obs': obs, 'obs_prob': obs_prob}
 
 
 def arm_open(qs, ans):
@@ -217,7 +225,29 @@ def lens_report(qs, lens, version):
     return {'questions': len(qs), 'read': len(obs), 'primary': e1.encompassing(obs) if len({v for _, v in obs}) > 1 else None}
 
 
-def utility(obs):
+def held_back(qs, lens, ans):
+    """Seen inside, not written. For each question the lens reading under the old date (prompt minus mirror) points to
+    Yes or No, and so does the arm's written answer (share of Yes answers above or below one half). Reports how often
+    the inside pointed to the real outcome, how often the written answer did, and, among the questions where the
+    inside pointed to the real outcome, the share where the written answer did not."""
+    n = inside_right = written_right = hidden = 0
+    for r in qs:
+        a, b = lens.get(f"{r['key']}__pit"), lens.get(f"{r['key']}__pit_flip")
+        d = dated(ans, r['key'])
+        if a is None or b is None or a == b or d['yes'] is None:
+            continue
+        y = bool(int(r['resolved_yes']))
+        ins, wr = (a - b > 0) == y, (d['yes'] != 0.5 and (d['yes'] > 0.5) == y)
+        n, inside_right, written_right, hidden = n + 1, inside_right + ins, written_right + wr, hidden + (ins and not wr)
+    if not n:
+        return None
+    return {'questions': n, 'inside_points_to_outcome': inside_right / n, 'written_points_to_outcome': written_right / n,
+            'seen_inside_not_written': hidden / inside_right if inside_right else None}
+
+
+def moves_with_crowd(obs):
+    """Do the model's answers follow the crowd's forecast of the day? Spearman correlation over story means,
+    one-sided. An engine that gives the same answer to everything fails this."""
     from scipy import stats
     by = {}
     for r, p in obs:
@@ -232,62 +262,101 @@ def utility(obs):
 
 def score(answers, lens=None):
     qs = rows()
-    sets = {s: [r for r in qs if r['set'] == s] for s in ('test', 'floor', 'long')}
+    sets = {s: [r for r in qs if r['set'] == s] for s in ('test', 'floor', 'long', 'markets')}
     test, floor = sets['test'], sets['floor']
-    rep = {'thresholds': {'p': P_LEAK, 'clean_share': CLEAN_SHARE, 'min_numbers': MIN_NUMBERS,
+    rep = {'thresholds': {'p': P_LEAK, 'clean_share': CLEAN_SHARE, 'min_share_answered': MIN_NUMBERS, 'floor_brier_margin': FLOOR_BRIER_MARGIN, 'bench_margin': BENCH_MARGIN,
                           'min_answered': MIN_ANSWERED, 'min_stories': MIN_STORIES}}
     po, pf = arm_open(test, answers['F-open']), arm_open(floor, answers['F-open'])
     eo, ef = arm_open(test, answers['F-pair']), arm_open(floor, answers['F-pair'])
     pd_, pdf = arm_dated(test, answers['F-open']), arm_dated(floor, answers['F-open'])
     ed, edf = arm_dated(test, answers['F-pair']), arm_dated(floor, answers['F-pair'])
+    # The stated probabilities are used beside the Yes/No answers only if both arms give them in at least 90% of answers.
+    use_prob = bool(pd_['share_with_probability'] >= MIN_NUMBERS and ed['share_with_probability'] >= MIN_NUMBERS)
+    key_t, key_s, key_o = ('primary_prob', 'leak_size_prob', 'obs_prob') if use_prob else ('primary', 'leak_size', 'obs')
+
+    def detects(a):
+        """A leak is detected if the Yes/No score shows it, or (when usable) the probability score shows it."""
+        if not use_prob:
+            return above(a['primary'])
+        return above(a['primary'], P_EITHER) or above(a['primary_prob'], P_EITHER)
     v1 = above(po['primary']) and po['share_answered'] >= MIN_ANSWERED and po['stories_answered'] >= MIN_STORIES
-    v2 = not above(pdf['primary'])
-    v3 = above(pd_['primary'])
+    v2 = not detects(pdf)
+    v3 = detects(pd_)
     if not v1:
         verdict = 'inconclusive: plain P does not remember under the engine settings'
     elif not v2:
         verdict = 'inconclusive: the test is not quiet on the floor'
     elif not v3:
         verdict = 'inconclusive for the engine: plain P does not leak when given the date'
-    elif ed['primary'] is None:
-        verdict = 'uninformative: the engine gives the same probability to every question'
-    elif above(ed['primary']):
+    elif ed['primary'] is None and ed[key_t] is None:
+        verdict = 'uninformative: the engine gives the same answer to every question'
+    elif detects(ed):
         verdict = 'leaks'
-    elif ed['leak_size']['ci95'][1] <= CLEAN_SHARE * pd_['leak_size']['size']:
+    elif ed[key_s] and pd_[key_s] and ed[key_s]['ci95'][1] <= CLEAN_SHARE * pd_[key_s]['size']:
         verdict = 'clean'
     else:
         verdict = 'no leak found, not shown clean'
     removed = None
-    if v3 and ed['primary'] is not None:
-        paired = leak_size(ed['obs'], other=pd_['obs'])
+    if ed[key_o] and pd_[key_o] and len({round(p, 9) for _, p in ed[key_o]}) > 1:
+        paired = leak_size(ed[key_o], other=pd_[key_o])
         if paired and paired.get('ratio_to_plain') is not None:
             removed = {'point': 1 - paired['ratio_to_plain'],
                        'ci95': [1 - paired['ratio_ci95'][1], 1 - paired['ratio_ci95'][0]]}
-    recall_2026 = ('the engine recalls outcomes when told it is 2026' if above(eo['primary']) and not above(ef['primary'])
-                   else 'not shown' if not above(eo['primary']) else 'inconclusive: the engine is not quiet on the floor')
-    both = ed['obs'] + edf['obs']
-    u = utility(both)
-    bt = brier(both)
+    recall_2026 = ('does not block: the engine recalls outcomes when told it is 2026' if above(eo['primary']) and not above(ef['primary'])
+                   else 'blocks' if not above(eo['primary']) else 'inconclusive: the engine is not quiet on the floor')
+    bkey = 'brier_prob' if use_prob else 'brier_yes_share'
+    bf_plain, bf_engine = pdf[bkey], edf[bkey]
+    floor_ok = bool(bf_plain and bf_engine and bf_engine['model'] <= bf_plain['model'] + FLOOR_BRIER_MARGIN)
+    bench_ok = all(eng >= plain - BENCH_MARGIN for plain, eng in GENERAL_ABILITY.values())
+    follows = moves_with_crowd(ed[key_o] + edf[key_o])
+    follows_ok = bool(follows and follows['spearman'] > 0 and follows['p_one_sided'] < P_LEAK)
+    useful = bool(ed['share_answered'] >= MIN_NUMBERS and floor_ok and follows_ok and bench_ok)
     rep['verdicts'] = {
         'V1_plain_remembers': v1, 'V2_quiet_on_floor': v2, 'V3_plain_leaks_dated': v3, 'V4_engine': verdict,
-        'leak_removed_share': removed,
+        'leak_removed_share': removed, 'probabilities_used': use_prob,
         'V5_engine_2026_recall': recall_2026,
-        'V6_useful': bool(ed['share_with_a_number'] >= MIN_NUMBERS and u and u['spearman'] > 0 and u['p_one_sided'] < P_LEAK
-                          and bt and bt['model'] < 0.25),
-        'V6_parts': {'share_with_a_number': ed['share_with_a_number'], 'moves_with_the_crowd': u, 'brier_test_and_floor': bt}}
+        'V6_utility_preserved': useful,
+        'V6_parts': {'share_answered': ed['share_answered'], 'moves_with_the_crowd': follows, 'floor_brier_plain': bf_plain, 'floor_brier_engine': bf_engine,
+                     'general_ability': GENERAL_ABILITY, 'brier_test_plain': pd_[bkey], 'brier_test_engine': ed[bkey]},
+        'headline': ('clean, with utility preserved' if verdict == 'clean' and useful else
+                     'clean, but utility not preserved' if verdict == 'clean' else verdict)}
+
+    def num(t, k):
+        return None if not t or k not in t else t[k]
+    rep['scorecard'] = {
+        'measure': 'stated probability' if use_prob else 'share of Yes answers',
+        'plain_recall_2026': {'right': po['right'], 'share_answered': po['share_answered']},
+        'leak_plain': {'size': num(pd_[key_s], 'size'), 'ci95': num(pd_[key_s], 'ci95'), 'p': num(pd_[key_t], 'p_one_sided')},
+        'leak_engine': {'size': num(ed[key_s], 'size'), 'ci95': num(ed[key_s], 'ci95'), 'p': num(ed[key_t], 'p_one_sided')},
+        'leak_on_floor': {'plain_p': num(pdf[key_t], 'p_one_sided'), 'engine_p': num(edf[key_t], 'p_one_sided')},
+        'leak_removed_share': removed,
+        'engine_recall_2026': {'right': eo['right'], 'share_answered': eo['share_answered'], 'p': num(eo['primary'], 'p_one_sided'),
+                               'share_answered_on_floor': ef['share_answered']},
+        'forecast_error_test': {'crowd': num(pd_[bkey], 'crowd'), 'plain': num(pd_[bkey], 'model'), 'engine': num(ed[bkey], 'model'), 'always_50': 0.25},
+        'forecast_error_floor': {'crowd': num(bf_plain, 'crowd'), 'plain': num(bf_plain, 'model'), 'engine': num(bf_engine, 'model'), 'always_50': 0.25},
+        'engine_follows_crowd': follows, 'general_ability_plain_vs_engine': GENERAL_ABILITY,
+        'engine_answers_with_final_line': ed['share_answered']}
     rep['plain'] = {'open_test': po, 'open_floor': pf, 'dated_test': pd_, 'dated_floor': pdf}
     rep['engine'] = {'open_test': eo, 'open_floor': ef, 'dated_test': ed, 'dated_floor': edf}
     rep['by_origin'] = {o: {arm: arm_dated([r for r in test if r['origin'] == o], answers[arm])['primary']
                             for arm in ('F-open', 'F-pair')} for o in ('round 1', 'fresh')}
     rep['long_shots'] = {arm: {'dated': arm_dated(sets['long'], answers[arm]), 'open': arm_open(sets['long'], answers[arm])}
                          for arm in ('F-open', 'F-pair')}
+    rep['markets_2023_2024'] = {arm: {'dated': arm_dated(sets['markets'], answers[arm]), 'open': arm_open(sets['markets'], answers[arm])}
+                                for arm in ('F-open', 'F-pair')}
+    rep['by_source'] = {src: {arm: arm_dated([r for r in test if e1.source(r) == src], answers[arm])[key_t] for arm in ('F-open', 'F-pair')}
+                        for src in sorted({e1.source(r) for r in test})}
     if lens is not None:
         l1, l2, l3 = lens_report(test, lens, 'open'), lens_report(floor, lens, 'pit'), lens_report(test, lens, 'pit')
         rep['lens'] = {'L1_sees_memory_open': l1, 'L2_floor_dated': l2, 'L3_test_dated': l3,
                        'verdict': ('inconclusive: the lens does not see memory' if not above(l1['primary']) else
                                    'inconclusive: the lens is not quiet on the floor' if above(l2['primary']) else
                                    'knowledge is inside under the old date' if above(l3['primary']) else
-                                   'the lens shows no knowledge inside under the old date')}
+                                   'the lens shows no knowledge inside under the old date'),
+                       'seen_inside_not_written': {name: {arm: held_back(S, lens, answers[arm]) for arm in ('F-open', 'F-pair')}
+                                                   for name, S in (('test', test), ('floor', floor))}}
+        rep['scorecard']['lens'] = {'inside_leak_p': num(l3['primary'], 'p_one_sided'), 'floor_p': num(l2['primary'], 'p_one_sided'),
+                                    'seen_inside_not_written': rep['lens']['seen_inside_not_written']['test']}
 
     def strip(x):
         if isinstance(x, dict):
@@ -303,5 +372,6 @@ if __name__ == '__main__':
     for k, v in result['verdicts'].items():
         if k != 'V6_parts':
             print(k, '->', v)
+    print(json.dumps(result['scorecard'], indent=1))
     if 'lens' in result:
         print('lens ->', result['lens']['verdict'])

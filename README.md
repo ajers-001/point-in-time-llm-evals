@@ -65,7 +65,7 @@ each asked with its original date, plus 198 questions from 2025 and 2026 that th
 ## What's next
 
 - **Round 2 of the forecasting benchmark.** It is designed and priced, and repeats the test with more questions and
-  stricter rules to confirm these findings. I am gathering feedback on the plan before running it. The design is
+  stricter rules to confirm these findings. I have revised the plan after feedback from Humzah Merchant. The design is
   described [below](#the-next-round-designed-not-yet-run).
 - **A live earnings test.** For 253 company earnings releases between October 20 and November 13, 2026, the model's
   predictions were recorded and locked in before any of the results came out. They will be scored once all the
@@ -194,25 +194,27 @@ to check first that a model knows the answers, which led to the forecasting benc
 
 ## The next round (designed, not yet run)
 
-- **586 test questions,** 213 of which have never been shown to any model, plus 369 long shots that the crowd put
-  under 10% or over 90%, reported separately.
+- **586 test questions,** 213 of which have never been shown to any model. Two more sets are reported separately: 369
+  long shots that the crowd put under 10% or over 90%, and 75 real prediction-market questions from 2023 and 2024.
 - **Each question asked in reverse** ("Will this not happen?"), so that a model which always says "No" cannot pass.
+- **Reason first, then answer.** Following feedback from Humzah Merchant, the model thinks the question through in a
+  few sentences and ends with a clear Yes or No. It then gives a probability on its own line, so that the number
+  cannot change the Yes or No.
 - **Five answers per question.** The model's sampler uses a fixed seed for every request in a run, so asking the same
   question five times in one run would return five identical answers. Each answer therefore comes from a separate run.
-- **New planned verdicts:** whether the model remembers outcomes when told the date is 2026, and whether it forecasts
-  better than always answering 50%.
+- **Three planned checks beyond the leak itself:** whether the engine still blocks later knowledge when the prompt says
+  the date is 2026; whether usefulness is preserved (the answers still follow the crowd, forecasts on unknowable
+  questions stay as good as the plain model's, and general reasoning scores hold); and, with the Jacobian lens, how
+  often the model had the real outcome inside but did not write it.
+- **A scorecard, not a label.** The result is reported as numbers with their ranges: the plain model's leak, the
+  engine's leak, the share removed, and the usefulness measures.
 
-Before spending any money, I ran made-up models through the scoring to check that it gives the right verdicts:
-
-| Made-up model | How often round 1 scoring called it clean | How often round 2 scoring calls it clean |
-|---|---|---|
-| Truly clean, while the plain model leaks on 6% of questions | 12% | 82% |
-| Truly clean, while the plain model leaks on 10% of questions | 26% | 97% |
-
-In round 2, a made-up model that leaks on 3% of questions is caught 92% of the time, and one that answers "No, 20%" to
-everything is labelled as giving no information. This check also found a flaw in the round 1 scoring: collecting more
-answers per question would have made it harder, not easier, to call a model clean. Round 2 measures the leak in plain
-probability units to fix this. [Round 2 rules (draft)](docs/round2_rules_draft.md)
+Before spending any money, I ran made-up models through the scoring. The test rarely gives a wrong label: a truly clean
+model is called leaking 1% to 5% of the time, and a model that still leaks too much is called clean 4% of the time. How
+often a truly clean model earns the label "clean" depends on how strongly the plain model leaks. With a leak like the
+one measured in round 1, it is about two times in three. These checks also found a flaw in the round 1 scoring, and an
+optimistic assumption in my own first simulation. Both are corrected in the rules.
+[Round 2 rules (draft)](docs/round2_rules_draft.md)
 
 ## The test pipeline
 
