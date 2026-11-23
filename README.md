@@ -67,10 +67,11 @@ each asked with its original date, plus 198 questions from 2025 and 2026 that th
 - **Round 2 of the forecasting benchmark.** It is designed and priced, and repeats the test with more questions and
   stricter rules to confirm these findings. I have revised the plan after feedback from Humzah Merchant. The design is
   described [below](#the-next-round-designed-not-yet-run).
-- **A live earnings test.** For 253 company earnings releases between October 20 and November 13, 2026, the model's
-  predictions were recorded and locked in before any of the results came out. They will be scored once all the
-  results are collected. Because these events happened after the model was trained, no training data can have leaked
-  into this test.
+- **A live earnings test, now scored.** For company earnings releases between October 20 and November 12, 2026, the
+  model's predictions were recorded and locked in before any of the results came out. Scored on the 204 releases that
+  kept their scheduled date, no version of the model showed a leak, and none predicted better than always guessing
+  "up". This agrees with the earlier finding that Qwen3.5-27B does not remember earnings results, so this task says
+  little about the engine itself.
 - **More benchmarks, already built.** These include 4,819 questions comparing real economic releases and market
   prices with what professional forecasters expected at the time, drawn from Reuters polls and the Philadelphia Fed's
   Survey of Professional Forecasters, and 369 long-shot questions where the crowd was almost certain.
