@@ -44,19 +44,35 @@ def rows():
     return out
 
 
-def visible(text):
-    """The answer the model gives after its thinking. With thinking mode on, the raw output holds the thinking, then
-    "</think>", then the answer. An output cut off inside the thinking has no answer."""
+THINKING = False  # round 2 runs with thinking mode off (rules, "What is asked")
+
+
+def visible(text, thinking=None):
+    """The answer the model gives, without any thinking block.
+
+    Thinking off (round 2): the chat template closes an empty thinking block inside the prompt, so the raw output is
+    the answer itself. Thinking on (the pilot, and any side study): the template opens the thinking inside the prompt,
+    so the raw output is the thinking, then "</think>", then the answer; an output with no "</think>" was cut off
+    inside its thinking and has no answer (its thinking may quote "Answer: Yes")."""
     text = text or ''
     if '</think>' in text:
         return text.rsplit('</think>', 1)[1]
-    return '' if '<think>' in text else text
+    return '' if (THINKING if thinking is None else thinking) else text
+
+
+RECALL = re.compile(r'answer\W*:?\W*(yes|no|unknown)\b', re.I)
 
 
 def last_word(text):
-    """Open versions: the last of Yes, No, Unknown (round 1 rule). +1 Yes, -1 No, 0 Unknown or nothing."""
-    w = re.findall(r'\b(yes|no|unknown)\b', visible(text).lower())
-    return {'yes': 1, 'no': -1}.get(w[-1], 0) if w else 0
+    """Recall prompts: the last line of the form "Answer: Yes", "Answer: No" or "Answer: Unknown". +1 Yes, -1 No,
+    0 for Unknown or for an answer with no such line (for example, cut off by the token limit)."""
+    w = RECALL.findall(visible(text))
+    return {'yes': 1, 'no': -1}.get(w[-1].lower(), 0) if w else 0
+
+
+def recall_line(text):
+    """True if a recall answer ends with one of the three asked lines."""
+    return bool(RECALL.search(visible(text)))
 
 
 def final_answer(text):
@@ -214,7 +230,9 @@ def arm_open(qs, ans):
             if any_answer:
                 obs.append((r, lean))
     right = [((v > 0) == bool(int(r['resolved_yes']))) for r, v in obs if v != 0]
+    texts = [t for r in qs for v in ('open', 'open_flip') for t in ans.get(f"{r['key']}__{v}", [])]
     return {'questions': len(qs), 'answered': answered, 'share_answered': answered / max(1, len(qs)),
+            'share_with_answer_line': sum(recall_line(t) for t in texts) / max(1, len(texts)),
             'stories_answered': len({r['story'] for r, _ in obs}), 'right': float(np.mean(right)) if right else None,
             'primary': e1.encompassing(obs) if len({v for _, v in obs}) > 1 else None}
 
@@ -303,6 +321,7 @@ def score(answers, lens=None):
         'engine_follows_crowd': follows, 'plain_follows_crowd': moves_with_crowd(pd_[key_o] + pdf[key_o]),
         'general_ability_plain_vs_engine_thinking_off': GENERAL_ABILITY,
         'answers_with_final_line': {'plain': pd_['share_answered'], 'engine': ed['share_answered']},
+        'recall_answers_with_final_line': {'plain': po['share_with_answer_line'], 'engine': eo['share_with_answer_line']},
         'answers_with_probability': {'plain': pd_['share_with_probability'], 'engine': ed['share_with_probability']},
         'yes_share_leak': {'plain_p': num(pd_['primary'], 'p_one_sided'), 'engine_p': num(ed['primary'], 'p_one_sided'),
                            'plain_size': num(pd_['leak_size'], 'size'), 'engine_size': num(ed['leak_size'], 'size')},

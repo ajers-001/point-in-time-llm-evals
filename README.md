@@ -198,24 +198,28 @@ to check first that a model knows the answers, which led to the forecasting benc
 - **586 test questions,** 213 of which have never been shown to any model. Two more sets are reported separately: 369
   long shots that the crowd put under 10% or over 90%, and 75 real prediction-market questions from 2023 and 2024.
 - **Each question asked in reverse** ("Will this not happen?"), so that a model which always says "No" cannot hide it.
-- **Reason first, then answer.** Following feedback from Humzah Merchant, the model's thinking mode is on. It reasons,
-  gives a clear Yes or No, and then gives a probability on its own line, so that the number cannot change the Yes or
-  No.
+- **Reason first, then answer.** Following feedback from Humzah Merchant, the model first writes a few sentences of
+  reasoning, then gives a clear Yes or No, and then gives a probability on its own line, so that the number cannot
+  change the Yes or No.
 - **Several answers per question.** The model's sampler uses a fixed seed for every request in a run, so repeating a
   question inside one run would return identical answers. Each answer therefore comes from a separate run.
 - **Numbers, not labels.** The rules fix in advance what is measured and how, and set no pass mark. The result is a
   scorecard: the plain model's leak, the engine's leak, the share removed, whether the engine still blocks later
   knowledge when the prompt says the date is 2026, forecast error, and whether the answers still follow the crowd.
 - **The lens through the whole answer.** In round 1 the lens read the model just before its first word. In round 2
-  it also follows a sample of answers from the first thinking token to the final Yes or No, to show when the real
+  it also follows a sample of answers from the first word of the reasoning to the final Yes or No, to show when the real
   outcome appears inside the model and whether it is still there when the answer is written. A further measure,
   "seen inside, not written", counts how often the model had the real outcome inside and did not write it.
 
 Before spending any money, I ran made-up models through the scoring to learn how precise the test is. With a
 plain-model leak like the one measured in round 1, the share of the leak removed can be known to roughly 20
 percentage points. These checks also found a flaw in the round 1 scoring, and an optimistic assumption in my own first
-simulation. Both are corrected in the rules. A small pilot run comes first, to measure the cost of running with
-thinking on. [Round 2 rules (draft)](docs/round2_rules_draft.md)
+simulation. Both are corrected in the rules.
+
+A pilot run came first, with the model's thinking mode on. It showed that thinking makes each answer more than twenty
+times longer and slows the engine several times over, which would put a full round far over budget. So round 2 runs
+with thinking mode off and short written reasoning. [Round 2 rules (draft)](docs/round2_rules_draft.md) ·
+[Project log: every test, including the ones that failed](docs/project_log.md)
 
 ## The test pipeline
 
@@ -228,15 +232,15 @@ The folder [`eval_pipeline/`](eval_pipeline/) runs the tests on rented GPUs with
   watchdog shuts down every GPU at the deadline.
 - Results are uploaded so that they cannot be overwritten, and they are checked again when they are collected.
 
-The whole project has used about $450 of rented GPU time so far.
+The whole project has used about $465 of rented GPU time so far.
 
 ## What is in this repository
 
 | Folder | Contents |
 |---|---|
-| `docs/` | The rules, results and method sources of the forecasting benchmark |
+| `docs/` | The rules, results and method sources of the forecasting benchmark, and the project log |
 | `bigevents/v1/` | Round 1: pulling the market data, building the questions, the knowledge check and the scoring |
-| `bigevents/v2/` | Round 2: building the questions, the scoring and the made-up-model check |
+| `bigevents/v2/` | Round 2: building the questions, the scoring, the made-up-model check and the answer-length check |
 | `eval_pipeline/` | The cloud controller, the GPU machine agent, the budget check and the watchdog |
 
 The code is an excerpt and needs the data and model from the private repository to run.

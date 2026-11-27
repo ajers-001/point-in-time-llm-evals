@@ -147,24 +147,30 @@ def flag():
     print(json.dumps({'asked_now': len(todo), 'have': len(done), 'cost_usd': round(spent[0], 4)}))
 
 
-REASON = ('Finish with two lines, written exactly in this form: "Answer: Yes" or "Answer: No", and then '
-          '"Probability: N", where N is a number from 0 to 100 for how likely it is that the answer to this question '
-          'is Yes.')
+REASON = ('First give your reasoning in at most five sentences. Then finish with two lines, written exactly in this '
+          'form: "Answer: Yes" or "Answer: No", and then "Probability: N", where N is a number from 0 to 100 for how '
+          'likely it is that the answer to this question is Yes.')
+RECALL = ('First give your reasoning in at most five sentences. Then finish with one line, written exactly in this '
+          'form: "Answer: Yes", "Answer: No", or "Answer: Unknown" if you do not know.')
 DIRECT = 'Answer with one word only: Yes or No.'
 
 
 def user_prompt(r, version, lens=False):
-    """`open` and `open_flip`: the round 1 recall question and its mirror (one-word answers). `pit` and `pit_flip`:
-    the dated forecast and its mirror. The engine runs with thinking mode on, so the model reasons first and then
-    gives a Yes/No line and a probability line (Humzah Merchant's advice, November 23). The lens prompts ask for the
-    one-word answer straight away, for the reading taken before any reasoning."""
+    """`open` and `open_flip`: the round 1 recall question and its mirror. `pit` and `pit_flip`: the dated forecast
+    and its mirror. In all four the model reasons first, in a few written sentences, and then gives its answer line
+    (and, for the dated ones, a probability line): Humzah Merchant's advice of November 23, extended to the recall
+    prompts on November 27 because one-word recall understated what plain Qwen knows in round 1 (69% right against
+    85% when it could think). Thinking mode is off: the pilot of
+    November 24 showed that with thinking on plain Qwen passes 4,096 tokens on 95% of these questions and the engine
+    writes about 84 tokens a second (reports/bigevents-v2/pilot/SESSIONS.md on claude/bigevents-engine). The lens
+    prompts ask for the one-word answer straight away, for the reading taken before any reasoning."""
     base = v1q.user_prompt(r, 'open' if version.startswith('open') else 'pit')
     head, last = base.rsplit('\n\n', 1)
-    if version == 'open':
-        return base
-    if version == 'open_flip':
-        assert last.startswith('How was it settled?'), last
-        return head + '\n\nWas it settled No? Answer with one word only: Yes, No, or Unknown if you do not know.'
+    if version.startswith('open'):
+        one_word = 'Answer with one word only: Yes, No, or Unknown if you do not know.'
+        assert last == 'How was it settled? ' + one_word, last
+        ask = 'How was it settled?' if version == 'open' else 'Was it settled No?'
+        return head + '\n\n' + ask + ' ' + (one_word if lens else RECALL)
     assert last.startswith('Will this question resolve Yes?'), last
     ask = 'Will this question resolve Yes?' if version == 'pit' else 'Will this question resolve No?'
     return head + '\n\n' + ask + ' ' + (DIRECT if lens else REASON)
